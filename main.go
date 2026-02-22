@@ -13,6 +13,9 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 )
 
 // Config 配置结构体
@@ -23,7 +26,7 @@ type Config struct {
 	SendTimes []string `json:"send_times"`          // 发送的时间列表，格式 "HH:MM"
 }
 
-const configFileName = "config.txt" // ← 改为 .txt
+const configFileName = "config.txt"
 
 var testMode = flag.Bool("test", false, "测试发送一次消息")
 
@@ -47,7 +50,7 @@ func main() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	// 立即检查一次（避免错过刚启动时的时间点）
+	// 立即检查一次
 	checkAndSend(cfg)
 
 	for range ticker.C {
@@ -55,12 +58,17 @@ func main() {
 	}
 }
 
-// loadConfig 从 config.txt 加载配置
+// loadConfig 从 config.txt 加载配置，并自动处理 GBK 编码
 func loadConfig() *Config {
 	data, err := os.ReadFile(configFileName)
 	if err != nil {
 		createExampleConfig()
 		log.Fatalf("❌ 未找到配置文件 '%s'，已生成示例文件，请编辑后重新运行！", configFileName)
+	}
+
+	// 尝试将 GBK 转为 UTF-8；如果失败，保持原数据（假设已是 UTF-8）
+	if utf8Data, ok := tryConvertGBKToUTF8(data); ok {
+		data = utf8Data
 	}
 
 	var cfg Config
@@ -79,14 +87,12 @@ func loadConfig() *Config {
 		log.Fatal("❌ 配置错误：send_days 和 send_times 至少各需一个值")
 	}
 
-	// 校验星期范围 [0,6]
 	for _, d := range cfg.SendDays {
 		if d < 0 || d > 6 {
 			log.Fatalf("❌ 星期值必须在 0~6 之间（0=周日），当前值: %d", d)
 		}
 	}
 
-	// 校验时间格式 HH:MM
 	for _, t := range cfg.SendTimes {
 		if _, err := time.Parse("15:04", t); err != nil {
 			log.Fatalf("❌ 时间格式错误: '%s'，应为 'HH:MM'（如 09:00）", t)
@@ -96,7 +102,18 @@ func loadConfig() *Config {
 	return &cfg
 }
 
-// createExampleConfig 生成示例配置文件（config.txt）
+// tryConvertGBKToUTF8 尝试将字节流从 GBK 转为 UTF-8
+// 成功返回 (utf8Bytes, true)，失败返回 (original, false)
+func tryConvertGBKToUTF8(data []byte) ([]byte, bool) {
+	decoder := simplifiedchinese.GBK.NewDecoder()
+	utf8Data, n, err := transform.Bytes(decoder, data)
+	if err != nil || n == 0 {
+		return data, false // 转换失败，原样返回
+	}
+	return utf8Data, true
+}
+
+// createExampleConfig 生成 UTF-8 编码的示例配置文件
 func createExampleConfig() {
 	example := `{
   "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的-key",
@@ -114,7 +131,6 @@ func checkAndSend(cfg *Config) {
 	weekday := int(now.Weekday())        // 0=Sunday, 1=Monday, ..., 6=Saturday
 	timeStr := now.Format("15:04")       // "09:00"
 
-	// 检查星期
 	dayMatch := false
 	for _, d := range cfg.SendDays {
 		if d == weekday {
@@ -126,7 +142,6 @@ func checkAndSend(cfg *Config) {
 		return
 	}
 
-	// 检查时间
 	timeMatch := false
 	for _, t := range cfg.SendTimes {
 		if t == timeStr {
@@ -142,7 +157,7 @@ func checkAndSend(cfg *Config) {
 	sendToWechat(cfg.Webhook, cfg.Message)
 }
 
-// sendToWechat 发送消息到企业微信（禁用证书验证）
+// sendToWechat 发送消息到企业微信（跳过证书验证）
 func sendToWechat(webhook, msg string) {
 	body := map[string]interface{}{
 		"msgtype": "text",
@@ -152,11 +167,10 @@ func sendToWechat(webhook, msg string) {
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	// 创建自定义 HTTP 客户端，跳过 TLS 证书验证（兼容 Win7）
 	client := &http.Client{
 		Transport: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true, // ← 关键：禁用证书验证
+				InsecureSkipVerify: true,
 			},
 		},
 	}
@@ -188,7 +202,7 @@ func testSend() {
 	sendToWechat(cfg.Webhook, cfg.Message)
 }
 
-// maskWebhook 隐藏 webhook 的 key 部分，用于日志安全显示
+// maskWebhook 隐藏 webhook 的 key 部分
 func maskWebhook(url string) string {
 	if i := strings.Index(url, "key="); i != -1 {
 		return url[:i+4] + "******"
