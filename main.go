@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/tls"
 	"encoding/json"
@@ -11,19 +12,17 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
-
-	"golang.org/x/text/encoding/simplifiedchinese"
-	"golang.org/x/text/transform"
 )
 
 // Config 配置结构体
 type Config struct {
-	Webhook   string   `json:"webhook"`             // 企业微信 webhook 地址
-	Message   string   `json:"message"`             // 要发送的消息内容
-	SendDays  []int    `json:"send_days"`           // 发送的星期（0=周日, 1=周一, ..., 6=周六）
-	SendTimes []string `json:"send_times"`          // 发送的时间列表，格式 "HH:MM"
+	Webhook   string   `json:"webhook"`
+	Message   string   `json:"message"`
+	SendDays  []int    `json:"send_days"`
+	SendTimes []string `json:"send_times"`
 }
 
 const configFileName = "config.txt"
@@ -39,8 +38,8 @@ func main() {
 		return
 	}
 
-	cfg := loadConfig()
-	fmt.Println("✅ 企业微信定时提醒器已启动")
+	cfg := loadOrPromptConfig()
+	fmt.Println("\n✅ 企业微信定时提醒器已启动")
 	fmt.Printf("📌 Webhook: %s\n", maskWebhook(cfg.Webhook))
 	fmt.Printf("📝 消息内容: %s\n", cfg.Message)
 	fmt.Printf("📅 发送星期: %v (0=周日, 1=周一...)\n", cfg.SendDays)
@@ -50,7 +49,6 @@ func main() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 
-	// 立即检查一次
 	checkAndSend(cfg)
 
 	for range ticker.C {
@@ -58,78 +56,160 @@ func main() {
 	}
 }
 
-// loadConfig 从 config.txt 加载配置，并自动处理 GBK 编码
-func loadConfig() *Config {
+// loadOrPromptConfig 尝试加载 config.txt，若不存在或无效，则交互式引导用户输入
+func loadOrPromptConfig() *Config {
 	data, err := os.ReadFile(configFileName)
+	if err == nil {
+		var cfg Config
+		if json.Unmarshal(data, &cfg) == nil &&
+			cfg.Webhook != "" && cfg.Message != "" &&
+			len(cfg.SendDays) > 0 && len(cfg.SendTimes) > 0 {
+			// 基本校验通过，尝试详细校验
+			valid := true
+			for _, d := range cfg.SendDays {
+				if d < 0 || d > 6 {
+					valid = false
+					break
+				}
+			}
+			for _, t := range cfg.SendTimes {
+				if _, e := time.Parse("15:04", t); e != nil {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				return &cfg
+			}
+		}
+	}
+
+	fmt.Printf("⚠️ 未找到有效配置文件 '%s'，请按提示输入配置信息：\n\n", configFileName)
+	cfg := promptConfigFromUser()
+	saveConfig(cfg)
+	fmt.Printf("\n✅ 配置已保存到 '%s'，下次启动将自动加载。\n\n", configFileName)
+	return cfg
+}
+
+// promptConfigFromUser 交互式获取用户输入
+func promptConfigFromUser() *Config {
+	reader := bufio.NewReader(os.Stdin)
+
+	// 1. webhook
+	fmt.Print("请输入企业微信 Webhook 地址（示例：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcd1234...）：\n> ")
+	webhook, _ := reader.ReadString('\n')
+	webhook = strings.TrimSpace(webhook)
+	for webhook == "" {
+		fmt.Print("❌ Webhook 不能为空，请重新输入：\n> ")
+		webhook, _ = reader.ReadString('\n')
+		webhook = strings.TrimSpace(webhook)
+	}
+
+	// 2. message
+	fmt.Print("\n请输入要发送的消息内容（示例：设备运行正常）：\n> ")
+	message, _ := reader.ReadString('\n')
+	message = strings.TrimSpace(message)
+	for message == "" {
+		fmt.Print("❌ 消息内容不能为空，请重新输入：\n> ")
+		message, _ = reader.ReadString('\n')
+		message = strings.TrimSpace(message)
+	}
+
+	// 3. send_days
+	fmt.Print("\n请输入发送的星期（用英文逗号分隔，0=周日,1=周一,...,6=周六，示例：1,2,3,4,5）：\n> ")
+	daysStr, _ := reader.ReadString('\n')
+	daysStr = strings.TrimSpace(daysStr)
+	var sendDays []int
+	for len(sendDays) == 0 {
+		if daysStr == "" {
+			fmt.Print("❌ 发送星期不能为空，请重新输入（示例：1,2,3）：\n> ")
+			daysStr, _ = reader.ReadString('\n')
+			daysStr = strings.TrimSpace(daysStr)
+			continue
+		}
+		parts := strings.Split(daysStr, ",")
+		sendDays = nil
+		valid := true
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			d, err := strconv.Atoi(part)
+			if err != nil || d < 0 || d > 6 {
+				fmt.Printf("❌ 星期值必须是 0~6 的整数（0=周日），当前输入包含无效值：%s\n", part)
+				valid = false
+				break
+			}
+			sendDays = append(sendDays, d)
+		}
+		if !valid || len(sendDays) == 0 {
+			fmt.Print("请重新输入（示例：1,3,5）：\n> ")
+			daysStr, _ = reader.ReadString('\n')
+			daysStr = strings.TrimSpace(daysStr)
+		}
+	}
+
+	// 4. send_times
+	fmt.Print("\n请输入发送的时间（用英文逗号分隔，格式 HH:MM，示例：09:00,14:30）：\n> ")
+	timesStr, _ := reader.ReadString('\n')
+	timesStr = strings.TrimSpace(timesStr)
+	var sendTimes []string
+	for len(sendTimes) == 0 {
+		if timesStr == "" {
+			fmt.Print("❌ 发送时间不能为空，请重新输入（示例：09:00）：\n> ")
+			timesStr, _ = reader.ReadString('\n')
+			timesStr = strings.TrimSpace(timesStr)
+			continue
+		}
+		parts := strings.Split(timesStr, ",")
+		sendTimes = nil
+		valid := true
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if _, err := time.Parse("15:04", part); err != nil {
+				fmt.Printf("❌ 时间格式错误，应为 HH:MM（如 09:00），当前值：%s\n", part)
+				valid = false
+				break
+			}
+			sendTimes = append(sendTimes, part)
+		}
+		if !valid || len(sendTimes) == 0 {
+			fmt.Print("请重新输入（示例：09:00,15:00）：\n> ")
+			timesStr, _ = reader.ReadString('\n')
+			timesStr = strings.TrimSpace(timesStr)
+		}
+	}
+
+	return &Config{
+		Webhook:   webhook,
+		Message:   message,
+		SendDays:  sendDays,
+		SendTimes: sendTimes,
+	}
+}
+
+// saveConfig 将配置保存为 UTF-8 编码的 config.txt
+func saveConfig(cfg *Config) {
+	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
-		createExampleConfig()
-		log.Fatalf("❌ 未找到配置文件 '%s'，已生成示例文件，请编辑后重新运行！", configFileName)
+		log.Fatalf("❌ 无法生成配置文件: %v", err)
 	}
-
-	// 尝试将 GBK 转为 UTF-8；如果失败，保持原数据（假设已是 UTF-8）
-	if utf8Data, ok := tryConvertGBKToUTF8(data); ok {
-		data = utf8Data
+	// 强制写入 UTF-8（Go 字符串默认 UTF-8）
+	err = os.WriteFile(configFileName, data, 0644)
+	if err != nil {
+		log.Fatalf("❌ 无法保存配置文件 '%s': %v", configFileName, err)
 	}
-
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		log.Fatalf("❌ 配置文件格式错误: %v", err)
-	}
-
-	// 基本校验
-	if cfg.Webhook == "" {
-		log.Fatal("❌ 配置错误：webhook 不能为空")
-	}
-	if cfg.Message == "" {
-		log.Fatal("❌ 配置错误：message 不能为空")
-	}
-	if len(cfg.SendDays) == 0 || len(cfg.SendTimes) == 0 {
-		log.Fatal("❌ 配置错误：send_days 和 send_times 至少各需一个值")
-	}
-
-	for _, d := range cfg.SendDays {
-		if d < 0 || d > 6 {
-			log.Fatalf("❌ 星期值必须在 0~6 之间（0=周日），当前值: %d", d)
-		}
-	}
-
-	for _, t := range cfg.SendTimes {
-		if _, err := time.Parse("15:04", t); err != nil {
-			log.Fatalf("❌ 时间格式错误: '%s'，应为 'HH:MM'（如 09:00）", t)
-		}
-	}
-
-	return &cfg
-}
-
-// tryConvertGBKToUTF8 尝试将字节流从 GBK 转为 UTF-8
-// 成功返回 (utf8Bytes, true)，失败返回 (original, false)
-func tryConvertGBKToUTF8(data []byte) ([]byte, bool) {
-	decoder := simplifiedchinese.GBK.NewDecoder()
-	utf8Data, n, err := transform.Bytes(decoder, data)
-	if err != nil || n == 0 {
-		return data, false // 转换失败，原样返回
-	}
-	return utf8Data, true
-}
-
-// createExampleConfig 生成 UTF-8 编码的示例配置文件
-func createExampleConfig() {
-	example := `{
-  "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的-key",
-  "message": "设备运行正常",
-  "send_days": [1, 2, 3, 4, 5],
-  "send_times": ["09:00", "14:00"]
-}
-`
-	_ = os.WriteFile(configFileName, []byte(example), 0644)
 }
 
 // checkAndSend 检查当前时间是否匹配配置，若匹配则发送
 func checkAndSend(cfg *Config) {
 	now := time.Now()
-	weekday := int(now.Weekday())        // 0=Sunday, 1=Monday, ..., 6=Saturday
-	timeStr := now.Format("15:04")       // "09:00"
+	weekday := int(now.Weekday())
+	timeStr := now.Format("15:04")
 
 	dayMatch := false
 	for _, d := range cfg.SendDays {
@@ -157,7 +237,7 @@ func checkAndSend(cfg *Config) {
 	sendToWechat(cfg.Webhook, cfg.Message)
 }
 
-// sendToWechat 发送消息到企业微信（跳过证书验证）
+// sendToWechat 发送消息到企业微信（禁用证书验证）
 func sendToWechat(webhook, msg string) {
 	body := map[string]interface{}{
 		"msgtype": "text",
@@ -198,7 +278,7 @@ func sendToWechat(webhook, msg string) {
 
 // testSend 执行一次测试发送
 func testSend() {
-	cfg := loadConfig()
+	cfg := loadOrPromptConfig()
 	sendToWechat(cfg.Webhook, cfg.Message)
 }
 
