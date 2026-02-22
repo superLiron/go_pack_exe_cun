@@ -33,7 +33,7 @@ jobs:
           go build -o wechat-proxy.exe .
         shell: pwsh
 
-      - name: Create config.txt example (UTF-8 without BOM)
+      - name: Create config.txt example
         run: |
           $json = @'
           {
@@ -43,8 +43,7 @@ jobs:
             "send_times": ["09:00"]
           }
           '@
-          # 强制以 UTF-8 无 BOM 格式写入文件
-          [System.IO.File]::WriteAllText("$pwd/config.txt", $json, [System.Text.UTF8Encoding]::new($false))
+          Set-Content -Path "config.txt" -Value $json
         shell: pwsh
 
       - name: Upload Artifact
