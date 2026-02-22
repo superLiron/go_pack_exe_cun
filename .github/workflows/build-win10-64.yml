@@ -1,0 +1,45 @@
+name: Build for Windows 10 64-bit
+
+on:
+  workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest  # 使用 GitHub 提供的 Windows 构建环境（通常是 Win Server 2022，兼容 Win10）
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'  # 与你的项目兼容
+
+      - name: Build Windows 10 64-bit EXE
+        run: |
+          $env:GOOS="windows"
+          $env:GOARCH="amd64"
+          $env:CGO_ENABLED="0"
+          go build -o wechat-proxy.exe .
+        shell: pwsh
+
+      - name: Create config.json example
+        run: |
+          Set-Content -Path "config.json" -Value '{
+  "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key-here",
+  "message": "设备运行正常",
+  "send_days": [1, 2, 3, 4, 5],
+  "send_times": ["09:00"]
+}'
+        shell: pwsh
+
+      - name: Upload Artifact (EXE + config.json)
+        uses: actions/upload-artifact@v4
+        with:
+          name: wechat-proxy-win10-amd64
+          path: |
+            wechat-proxy.exe
+            config.json
