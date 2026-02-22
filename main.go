@@ -3,6 +3,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,7 +11,6 @@ import (
 	"log"
 	"net/http"
 	"os"
-	// "strconv"
 	"strings"
 	"time"
 )
@@ -23,7 +23,7 @@ type Config struct {
 	SendTimes []string `json:"send_times"`          // 发送的时间列表，格式 "HH:MM"
 }
 
-const configFileName = "config.json"
+const configFileName = "config.txt" // ← 改为 .txt
 
 var testMode = flag.Bool("test", false, "测试发送一次消息")
 
@@ -55,7 +55,7 @@ func main() {
 	}
 }
 
-// loadConfig 从 config.json 加载配置
+// loadConfig 从 config.txt 加载配置
 func loadConfig() *Config {
 	data, err := os.ReadFile(configFileName)
 	if err != nil {
@@ -96,7 +96,7 @@ func loadConfig() *Config {
 	return &cfg
 }
 
-// createExampleConfig 生成示例配置文件
+// createExampleConfig 生成示例配置文件（config.txt）
 func createExampleConfig() {
 	example := `{
   "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的-key",
@@ -142,7 +142,7 @@ func checkAndSend(cfg *Config) {
 	sendToWechat(cfg.Webhook, cfg.Message)
 }
 
-// sendToWechat 发送消息到企业微信
+// sendToWechat 发送消息到企业微信（禁用证书验证）
 func sendToWechat(webhook, msg string) {
 	body := map[string]interface{}{
 		"msgtype": "text",
@@ -152,7 +152,16 @@ func sendToWechat(webhook, msg string) {
 	}
 	jsonBody, _ := json.Marshal(body)
 
-	resp, err := http.Post(webhook, "application/json", bytes.NewBuffer(jsonBody))
+	// 创建自定义 HTTP 客户端，跳过 TLS 证书验证（兼容 Win7）
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true, // ← 关键：禁用证书验证
+			},
+		},
+	}
+
+	resp, err := client.Post(webhook, "application/json", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		fmt.Printf("❌ 网络错误: %v\n", err)
 		return
