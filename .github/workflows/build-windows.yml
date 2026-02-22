@@ -25,10 +25,6 @@ jobs:
         with:
           go-version: '1.20'
 
-      # 👇 关键：生成 go.sum
-      - name: Tidy dependencies and generate go.sum
-        run: go mod tidy
-
       - name: Build binary
         run: |
           $env:GOOS="windows"
@@ -37,24 +33,8 @@ jobs:
           go build -o wechat-proxy.exe .
         shell: pwsh
 
-      - name: Create config.txt example (UTF-8)
-        run: |
-          $json = @'
-          {
-            "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key-here",
-            "message": "设备运行正常",
-            "send_days": [1, 2, 3, 4, 5],
-            "send_times": ["09:00"]
-          }
-          '@
-          [System.IO.File]::WriteAllText("$pwd/config.txt", $json, [System.Text.UTF8Encoding]::new($false))
-        shell: pwsh
-
-      - name: Upload Artifact (including go.sum for reference)
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact-name }}
-          path: |
-            wechat-proxy.exe
-            config.txt
-            go.sum   # 👈 上传生成的 go.sum
+          path: wechat-proxy.exe
