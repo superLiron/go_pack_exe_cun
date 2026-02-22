@@ -14,6 +14,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -38,8 +39,8 @@ func enableQuickEditMode() {
 	getStdHandle := kernel32.NewProc("GetStdHandle")
 	setConsoleMode := kernel32.NewProc("SetConsoleMode")
 
-	// STD_INPUT_HANDLE = -10
-	stdin, _, _ := getStdHandle.Call(uintptr(-10))
+	// 使用 syscall.STD_INPUT_HANDLE (-10) 获取标准输入句柄
+	stdin, _, _ := getStdHandle.Call(uintptr(syscall.STD_INPUT_HANDLE))
 	if stdin == 0 {
 		return
 	}
@@ -61,7 +62,7 @@ func enableQuickEditMode() {
 }
 
 func main() {
-	// 👇 关键：启动时自动启用右键粘贴功能
+	// 👇 启用右键粘贴支持（关键！）
 	enableQuickEditMode()
 
 	flag.Parse()
@@ -98,7 +99,6 @@ func loadOrPromptConfig() *Config {
 		if json.Unmarshal(data, &cfg) == nil &&
 			cfg.Webhook != "" && cfg.Message != "" &&
 			len(cfg.SendDays) > 0 && len(cfg.SendTimes) > 0 {
-			// 基本校验通过，尝试详细校验
 			valid := true
 			for _, d := range cfg.SendDays {
 				if d < 0 || d > 6 {
@@ -129,7 +129,6 @@ func loadOrPromptConfig() *Config {
 func promptConfigFromUser() *Config {
 	reader := bufio.NewReader(os.Stdin)
 
-	// 1. webhook
 	fmt.Print("请输入企业微信 Webhook 地址（示例：https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=abcd1234...）：\n> ")
 	webhook, _ := reader.ReadString('\n')
 	webhook = strings.TrimSpace(webhook)
@@ -139,7 +138,6 @@ func promptConfigFromUser() *Config {
 		webhook = strings.TrimSpace(webhook)
 	}
 
-	// 2. message
 	fmt.Print("\n请输入要发送的消息内容（示例：设备运行正常）：\n> ")
 	message, _ := reader.ReadString('\n')
 	message = strings.TrimSpace(message)
@@ -149,7 +147,6 @@ func promptConfigFromUser() *Config {
 		message = strings.TrimSpace(message)
 	}
 
-	// 3. send_days
 	fmt.Print("\n请输入发送的星期（用英文逗号分隔，0=周日,1=周一,...,6=周六，示例：1,2,3,4,5）：\n> ")
 	daysStr, _ := reader.ReadString('\n')
 	daysStr = strings.TrimSpace(daysStr)
@@ -184,7 +181,6 @@ func promptConfigFromUser() *Config {
 		}
 	}
 
-	// 4. send_times
 	fmt.Print("\n请输入发送的时间（用英文逗号分隔，格式 HH:MM，示例：09:00,14:30）：\n> ")
 	timesStr, _ := reader.ReadString('\n')
 	timesStr = strings.TrimSpace(timesStr)
