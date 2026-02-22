@@ -15,6 +15,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unsafe"
+
+	"golang.org/x/sys/windows"
 )
 
 // Config 配置结构体
@@ -29,7 +32,38 @@ const configFileName = "config.txt"
 
 var testMode = flag.Bool("test", false, "测试发送一次消息")
 
+// enableQuickEditMode 启用 Windows 控制台的快速编辑模式（支持右键粘贴）
+func enableQuickEditMode() {
+	kernel32 := windows.NewLazyDLL("kernel32.dll")
+	getStdHandle := kernel32.NewProc("GetStdHandle")
+	setConsoleMode := kernel32.NewProc("SetConsoleMode")
+
+	// STD_INPUT_HANDLE = -10
+	stdin, _, _ := getStdHandle.Call(uintptr(-10))
+	if stdin == 0 {
+		return
+	}
+
+	// 获取当前控制台输入模式
+	var mode uint32
+	getConsoleModeProc := kernel32.NewProc("GetConsoleMode")
+	ret, _, _ := getConsoleModeProc.Call(stdin, uintptr(unsafe.Pointer(&mode)))
+	if ret == 0 {
+		return
+	}
+
+	// ENABLE_QUICK_EDIT_MODE = 0x0040
+	const ENABLE_QUICK_EDIT_MODE = 0x0040
+	newMode := mode | ENABLE_QUICK_EDIT_MODE
+
+	// 设置新模式
+	setConsoleMode.Call(stdin, uintptr(newMode))
+}
+
 func main() {
+	// 👇 关键：启动时自动启用右键粘贴功能
+	enableQuickEditMode()
+
 	flag.Parse()
 
 	if *testMode {
@@ -198,7 +232,6 @@ func saveConfig(cfg *Config) {
 	if err != nil {
 		log.Fatalf("❌ 无法生成配置文件: %v", err)
 	}
-	// 强制写入 UTF-8（Go 字符串默认 UTF-8）
 	err = os.WriteFile(configFileName, data, 0644)
 	if err != nil {
 		log.Fatalf("❌ 无法保存配置文件 '%s': %v", configFileName, err)
