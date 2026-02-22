@@ -33,7 +33,7 @@ jobs:
           go build -o wechat-proxy.exe .
         shell: pwsh
 
-      - name: Create config.json example
+      - name: Create config.txt example
         run: |
           $json = @'
           {
@@ -43,7 +43,7 @@ jobs:
             "send_times": ["09:00"]
           }
           '@
-          Set-Content -Path "config.json" -Value $json
+          Set-Content -Path "config.txt" -Value $json
         shell: pwsh
 
       - name: Upload Artifact
@@ -52,4 +52,4 @@ jobs:
           name: ${{ matrix.artifact-name }}
           path: |
             wechat-proxy.exe
-            config.json
+            config.txt
