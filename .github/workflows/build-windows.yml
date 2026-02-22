@@ -1,0 +1,60 @@
+name: Build for Windows (64-bit & 32-bit)
+
+on:
+  workflow_dispatch:  # 允许手动触发
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        include:
+          - goos: windows
+            goarch: amd64
+            artifact-name: wechat-proxy-win10-amd64
+            exe-name: wechat-proxy.exe
+          - goos: windows
+            goarch: 386
+            artifact-name: wechat-proxy-win7-x86
+            exe-name: wechat-proxy.exe
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+
+      - name: Build ${{ matrix.goarch }} binary
+        run: |
+          $env:GOOS="${{ matrix.goos }}"
+          $env:GOARCH="${{ matrix.goarch }}"
+          $env:CGO_ENABLED="0"
+          go build -o "${{ matrix.exe-name }}" .
+        shell: pwsh
+
+      - name: Create config.json example
+        run: |
+          $json = @'
+          {
+            "webhook": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=your-key-here",
+            "message": "设备运行正常",
+            "send_days": [1, 2, 3, 4, 5],
+            "send_times": ["09:00"]
+          }
+          '@
+          Set-Content -Path "config.json" -Value $json
+        shell: pwsh
+
+      - name: Upload Artifact (${{ matrix.artifact-name }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: |
+            ${{ matrix.exe-name }}
+            config.json
